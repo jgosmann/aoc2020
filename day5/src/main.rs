@@ -1,4 +1,5 @@
 use itertools::{process_results, Itertools};
+use std::collections::HashSet;
 use std::convert::{TryFrom, TryInto};
 use std::io::{self, BufRead};
 
@@ -62,16 +63,27 @@ impl TryFrom<&[u8; 10]> for Seat {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
-    let seats = stdin
-        .lock()
-        .lines()
-        .map(|line| -> Result<usize, Box<dyn std::error::Error>> {
-            let encoding: [u8; 10] = line?.as_bytes().try_into()?;
-            let seat = Seat::try_from(&encoding)?;
-            Ok(seat.seat_id())
-        });
-    let max_seat_id = process_results(seats, |iter| iter.max())?.ok_or("No seat IDs.")?;
+    let seat_ids: HashSet<usize> = process_results(
+        stdin
+            .lock()
+            .lines()
+            .map(|line| -> Result<Seat, Box<dyn std::error::Error>> {
+                let encoding: [u8; 10] = line?.as_bytes().try_into()?;
+                Ok(Seat::try_from(&encoding)?)
+            }),
+        |iter| iter.map(|s| s.seat_id()).collect(),
+    )?;
+
+    let max_seat_id = seat_ids.iter().max().ok_or("No seat IDs.")?;
     println!("Max seat id: {}", max_seat_id);
+
+    for id in &seat_ids {
+        if !seat_ids.contains(&(id + 1)) && seat_ids.contains(&(id + 2)) {
+            println!("My seat: {}", id + 1);
+            break;
+        }
+    }
+
     Ok(())
 }
 
