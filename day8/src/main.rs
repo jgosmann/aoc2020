@@ -3,13 +3,6 @@ use std::fmt::Display;
 use std::io::{self, BufRead};
 
 #[derive(Clone, Debug, PartialEq)]
-enum OpCode {
-    Acc(i32),
-    Jmp(isize),
-    Nop(isize),
-}
-
-#[derive(Clone, Debug, PartialEq)]
 struct State {
     accumulator: i32,
     instruction_pointer: usize,
@@ -24,29 +17,50 @@ impl State {
     }
 }
 
-#[derive(Debug)]
-enum OpCodeParseError {
-    InvalidOpCode,
+#[derive(Clone, Debug, PartialEq)]
+enum OpCode {
+    Acc(i32),
+    Jmp(isize),
+    Nop(isize),
 }
 
-impl Display for OpCodeParseError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        formatter.write_str(match self {
-            OpCodeParseError::InvalidOpCode => "Invalid op code.",
-        })
+#[derive(Debug)]
+enum OpCodeParseError<'a> {
+    InvalidOpCode(&'a str),
+    ArgumentParseError(std::num::ParseIntError),
+}
+
+impl<'a> From<std::num::ParseIntError> for OpCodeParseError<'a> {
+    fn from(err: std::num::ParseIntError) -> Self {
+        OpCodeParseError::ArgumentParseError(err)
     }
 }
 
-impl std::error::Error for OpCodeParseError {}
+impl<'a> Display for OpCodeParseError<'a> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            OpCodeParseError::InvalidOpCode(op_code) => {
+                formatter.write_fmt(format_args!("Invalid op code '{}'.", op_code))?;
+            }
+            OpCodeParseError::ArgumentParseError(parse_err) => {
+                formatter.write_str("Error parsing argument:\n")?;
+                parse_err.fmt(formatter)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'a> std::error::Error for OpCodeParseError<'a> {}
 
 impl OpCode {
-    fn parse(input: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    fn parse(input: &str) -> Result<Self, OpCodeParseError> {
         let tokens: Vec<&str> = input.split(' ').collect();
         match tokens[0] {
             "acc" => Ok(OpCode::Acc(tokens[1].parse()?)),
             "jmp" => Ok(OpCode::Jmp(tokens[1].parse()?)),
             "nop" => Ok(OpCode::Nop(tokens[1].parse()?)),
-            _ => Err(Box::new(OpCodeParseError::InvalidOpCode)),
+            unknown => Err(OpCodeParseError::InvalidOpCode(unknown)),
         }
     }
 }
