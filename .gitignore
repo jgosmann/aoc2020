@@ -1,4 +1,5 @@
 *.in
 .*.swp
 .*.swo
+.vscode
 */target
