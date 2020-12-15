@@ -3,3 +3,4 @@
 .*.swo
 .vscode
 */target
+__pycache__
