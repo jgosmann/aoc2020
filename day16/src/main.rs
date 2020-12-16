@@ -9,11 +9,15 @@ use nom::{
 };
 use std::io::{self, Read};
 
+mod graph;
+
+use graph::DirectedGraph;
+
 trait Parsable<T> {
     fn parse(input: &str) -> IResult<&str, T>;
 }
 
-type Value = u32;
+type Value = u64;
 
 impl Parsable<Value> for Value {
     fn parse(input: &str) -> IResult<&str, Value> {
@@ -68,6 +72,12 @@ impl Parsable<Rule> for Rule {
     }
 }
 
+impl Rule {
+    fn is_valid(&self, value: Value) -> bool {
+        self.valid_ranges.iter().any(|r| r.contains(&value))
+    }
+}
+
 #[derive(Debug, PartialEq)]
 struct Ticket {
     values: Vec<Value>,
@@ -113,11 +123,7 @@ impl Parsable<Notes> for Notes {
 
 impl Notes {
     fn is_definitely_invalid_value(&self, value: Value) -> bool {
-        self.rules.iter().all(|rule| {
-            rule.valid_ranges
-                .iter()
-                .all(|range| !range.contains(&value))
-        })
+        self.rules.iter().all(|rule| !rule.is_valid(value))
     }
 
     fn ticket_scanning_error_rate(&self) -> Value {
@@ -127,6 +133,51 @@ impl Notes {
             .filter(|&&v| self.is_definitely_invalid_value(v))
             .sum()
     }
+
+    fn find_rules_to_fields_map(&self) -> Vec<usize> {
+        let mut graph = DirectedGraph::new(2 * self.rules.len() + 2);
+        for i in 1..=self.rules.len() {
+            graph.add_edge(0, i);
+            for j in self.rules.len() + 1..=2 * self.rules.len() {
+                graph.add_edge(i, j);
+            }
+            graph.add_edge(i + self.rules.len(), 2 * self.rules.len() + 1);
+        }
+
+        let valid_tickets = self.nearby_tickets.iter().filter(|ticket| {
+            !ticket
+                .values
+                .iter()
+                .any(|&v| self.is_definitely_invalid_value(v))
+        });
+        for ticket in valid_tickets {
+            for (i, rule) in self.rules.iter().enumerate() {
+                for (j, value) in ticket.values.iter().enumerate() {
+                    if !rule.is_valid(*value) {
+                        graph.remove_edge(i + 1, j + self.rules.len() + 1);
+                    }
+                }
+            }
+        }
+
+        let flow = graph.max_flow(0, 2 * self.rules.len() + 1);
+        flow.adjancency
+            .iter()
+            .skip(1)
+            .take(self.rules.len())
+            .map(|edges| *edges.iter().next().unwrap() - self.rules.len() - 1)
+            .collect()
+    }
+
+    fn departures_product(&self) -> Value {
+        let rules2fields = self.find_rules_to_fields_map();
+        self.rules
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.field.starts_with("departure"))
+            .map(|(i, _)| self.my_ticket.values[rules2fields[i]])
+            .fold(1, |acc, value| acc * value)
+    }
 }
 
 fn main() {
@@ -134,7 +185,11 @@ fn main() {
     let mut buf = String::new();
     stdin.read_to_string(&mut buf).unwrap();
     let (_, notes) = Notes::parse(&buf).unwrap();
-    println!("{}", notes.ticket_scanning_error_rate());
+    println!(
+        "Ticket scanning error rate: {}",
+        notes.ticket_scanning_error_rate()
+    );
+    println!("Departures product: {}", notes.departures_product());
 }
 
 #[cfg(test)]
