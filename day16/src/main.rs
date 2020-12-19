@@ -8,6 +8,7 @@ use nom::{
     IResult,
 };
 use std::io::{self, Read};
+use std::rc::Rc;
 
 mod graph;
 
@@ -25,7 +26,7 @@ impl Parsable<Value> for Value {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 struct InclusiveRange(Value, Value);
 
 impl Parsable<InclusiveRange> for InclusiveRange {
@@ -49,7 +50,7 @@ impl InclusiveRange {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 struct Rule {
     field: String,
     valid_ranges: Vec<InclusiveRange>,
@@ -115,10 +116,20 @@ impl Parsable<Notes> for Notes {
             Notes {
                 rules,
                 my_ticket,
-                nearby_tickets,
+                nearby_tickets: nearby_tickets
+                    .into_iter()
+                    .filter(|t| t.values.len() > 0)
+                    .collect(),
             }
         })(input)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Node<'a> {
+    Rule(&'a Rule),
+    Field(usize),
+    Other(&'a str),
 }
 
 impl Notes {
@@ -135,37 +146,57 @@ impl Notes {
     }
 
     fn find_rules_to_fields_map(&self) -> Vec<usize> {
-        let mut graph = DirectedGraph::new(2 * self.rules.len() + 2);
-        for i in 1..=self.rules.len() {
-            graph.add_edge(0, i);
-            for j in self.rules.len() + 1..=2 * self.rules.len() {
-                graph.add_edge(i, j);
-            }
-            graph.add_edge(i + self.rules.len(), 2 * self.rules.len() + 1);
-        }
+        let mut graph: DirectedGraph<Node> = DirectedGraph::new();
+        let start = Rc::new(Node::Other("start"));
+        let end = Rc::new(Node::Other("end"));
+        let rules: Vec<Rc<Node>> = self.rules.iter().map(Node::Rule).map(Rc::new).collect();
+        let fields: Vec<Rc<Node>> = (0..rules.len()).map(Node::Field).map(Rc::new).collect();
 
-        let valid_tickets = self.nearby_tickets.iter().filter(|ticket| {
-            !ticket
-                .values
-                .iter()
-                .any(|&v| self.is_definitely_invalid_value(v))
-        });
-        for ticket in valid_tickets {
-            for (i, rule) in self.rules.iter().enumerate() {
-                for (j, value) in ticket.values.iter().enumerate() {
-                    if !rule.is_valid(*value) {
-                        graph.remove_edge(i + 1, j + self.rules.len() + 1);
+        let valid_tickets: Vec<&Ticket> = self
+            .nearby_tickets
+            .iter()
+            .filter(|ticket| {
+                !ticket
+                    .values
+                    .iter()
+                    .any(|&v| self.is_definitely_invalid_value(v))
+            })
+            .collect();
+
+        for node in rules.iter().chain(fields.iter()) {
+            match **node {
+                Node::Rule(rule) => {
+                    graph.add_edge(&start, &node);
+
+                    for field_node in &fields {
+                        if let Node::Field(field) = **field_node {
+                            if valid_tickets.iter().all(|t| rule.is_valid(t.values[field])) {
+                                graph.add_edge(&node, &field_node);
+                            }
+                        } else {
+                            unreachable!()
+                        }
                     }
                 }
+                Node::Field(_) => {
+                    graph.add_edge(&node, &end);
+                }
+                Node::Other(_) => (),
             }
         }
 
-        let flow = graph.max_flow(0, 2 * self.rules.len() + 1);
-        flow.adjancency
+        let flow = graph.max_flow(&start, &end);
+        rules
             .iter()
-            .skip(1)
-            .take(self.rules.len())
-            .map(|edges| *edges.iter().next().unwrap() - self.rules.len() - 1)
+            .map(|rule| {
+                if let Node::Field(field) =
+                    **flow.adjancency.get(rule).unwrap().iter().next().unwrap()
+                {
+                    field
+                } else {
+                    unreachable!()
+                }
+            })
             .collect()
     }
 
