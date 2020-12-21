@@ -5,6 +5,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::{self, BufRead};
+use std::rc::Rc;
 
 lazy_static! {
     static ref FOOD_PARSE_REGEX: Regex = Regex::new(r"^(.*) \(contains (.*)\)$").unwrap();
@@ -34,7 +35,9 @@ impl TryFrom<&str> for Food {
     }
 }
 
-fn count_allergen_free_ingredients(foods: &Vec<Food>) -> usize {
+fn find_what_ingredients_an_allergen_might_be_contained_in(
+    foods: &Vec<Food>,
+) -> HashMap<&Allergen, HashSet<&Ingredient>> {
     let mut might_be_contained_in: HashMap<&Allergen, HashSet<&Ingredient>> = HashMap::new();
     for food in foods {
         for allergen in &food.allergens {
@@ -49,6 +52,11 @@ fn count_allergen_free_ingredients(foods: &Vec<Food>) -> usize {
                 .or_insert(food.ingredients.iter().collect());
         }
     }
+    might_be_contained_in
+}
+
+fn count_allergen_free_ingredients(foods: &Vec<Food>) -> usize {
+    let might_be_contained_in = find_what_ingredients_an_allergen_might_be_contained_in(foods);
 
     let mut allergen_free: HashSet<&Ingredient> =
         foods.iter().flat_map(|f| &f.ingredients).collect();
@@ -72,6 +80,38 @@ fn count_allergen_free_ingredients(foods: &Vec<Food>) -> usize {
         .sum()
 }
 
+fn canonical_dangerous_ingredient_list(foods: &Vec<Food>) -> Vec<Ingredient> {
+    use graph::DirectedGraph;
+
+    let might_be_contained_in = find_what_ingredients_an_allergen_might_be_contained_in(foods);
+
+    let mut graph: DirectedGraph<&String> = DirectedGraph::new();
+    let start_token = String::from("start");
+    let end_token = String::from("end");
+    let start = Rc::new(&start_token);
+    let end = Rc::new(&end_token);
+
+    for item in might_be_contained_in.iter() {
+        let (allergen, ingredients) = item;
+        let allergen = Rc::new(*allergen);
+        graph.add_edge(&start, &allergen);
+        for ingredient in ingredients {
+            let ingredient = Rc::new(*ingredient);
+            graph.add_edge(&allergen, &ingredient);
+            graph.add_edge(&ingredient, &end);
+        }
+    }
+
+    let flow = graph.max_flow(&start, &end);
+
+    let mut allergens: Vec<&Allergen> = might_be_contained_in.keys().copied().collect();
+    allergens.sort_unstable();
+    allergens
+        .iter()
+        .map(|allergen| (**flow.adjancency[allergen].iter().next().unwrap()).clone())
+        .collect()
+}
+
 fn main() {
     let stdin = io::stdin();
     let foods: Vec<Food> = stdin
@@ -80,6 +120,7 @@ fn main() {
         .map(|line| Food::try_from(line.unwrap().as_str()).unwrap())
         .collect();
     println!("{}", count_allergen_free_ingredients(&foods));
+    println!("{}", canonical_dangerous_ingredient_list(&foods).join(","));
 }
 
 #[cfg(test)]
@@ -108,5 +149,25 @@ mod tests {
         let foods: Result<Vec<Food>, ()> = input.into_iter().map(Food::try_from).collect();
         let foods = foods.unwrap();
         assert_eq!(count_allergen_free_ingredients(&foods), 5);
+    }
+
+    #[test]
+    fn test_canonical_dangerous_ingredients() {
+        let input = vec![
+            "mxmxvkd kfcds sqjhc nhms (contains dairy, fish)",
+            "trh fvjkl sbzzf mxmxvkd (contains dairy)",
+            "sqjhc fvjkl (contains soy)",
+            "sqjhc mxmxvkd sbzzf (contains fish)",
+        ];
+        let foods: Result<Vec<Food>, ()> = input.into_iter().map(Food::try_from).collect();
+        let foods = foods.unwrap();
+        assert_eq!(
+            canonical_dangerous_ingredient_list(&foods),
+            vec![
+                String::from("mxmxvkd"),
+                String::from("sqjhc"),
+                String::from("fvjkl")
+            ]
+        );
     }
 }

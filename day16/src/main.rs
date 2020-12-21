@@ -10,8 +10,6 @@ use nom::{
 use std::io::{self, Read};
 use std::rc::Rc;
 
-mod graph;
-
 use graph::DirectedGraph;
 
 trait Parsable<T> {
